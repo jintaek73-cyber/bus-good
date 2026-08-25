@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>기사 GPS</title>
+
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f4f6f8;
+}
+
+.wrap {
+  max-width: 560px;
+  margin: auto;
+  padding: 18px;
+}
+
+.card {
+  background: white;
+  padding: 18px;
+  border-radius: 16px;
+  margin-bottom: 15px;
+}
+
+select,
+button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px;
+  margin: 6px 0;
+  border-radius: 10px;
+  font-size: 16px;
+}
+
+button {
+  border: 0;
+  background: #222;
+  color: white;
+  font-weight: bold;
+}
+
+.stop {
+  background: #a33;
+}
+
+.stat {
+  line-height: 2;
+  background: #f7f7f7;
+  padding: 14px;
+  border-radius: 12px;
+}
+
+.ok {
+  color: green;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+
+<h1>🚌 기사 GPS</h1>
+
+<div class="card">
+
+<select id="vehicle">
+  <option>차량 불러오는 중...</option>
+</select>
+
+<button id="start">
+GPS 감시 시작
+</button>
+
+<button id="stop" class="stop">
+감시 중지
+</button>
+
+</div>
+
+
+<div class="card stat">
+
+상태:
+<b id="state">대기</b>
+
+<br>
+
+GPS:
+<span id="gps">대기</span>
+
+<br>
+
+출발지 이탈:
+<span id="base">0m</span>
+
+<br>
+
+누적 이동:
+<span id="move">0m</span>
+
+<br>
+
+연속 이동:
+<span id="secs">0초</span>
+
+</div>
+
+</div>
+
+
+<script type="module">
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  addDoc,
+  serverTimestamp
+}
+from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+
+const firebaseConfig = {
+
+  apiKey: "AIzaSyAYetxeWLMla5_Tikvw7zz6eJBhL0v4N3I",
+
+  authDomain: "bus-good.firebaseapp.com",
+
+  projectId: "bus-good",
+
+  storageBucket: "bus-good.firebasestorage.app",
+
+  messagingSenderId: "830835857254",
+
+  appId: "1:830835857254:web:2a0f10f7ab5a54a9505aa7",
+
+  measurementId: "G-4CY29SJJ8F"
+
+};
+
+
+const app = initializeApp(firebaseConfig);
+
+const db = getFirestore(app);
+
+
+const $ = id => document.getElementById(id);
+
+
+let vehicles = [];
+
+let watchId = null;
+
+let lastPosition = null;
+
+let totalDistance = 0;
+
+let movingSince = null;
+
+let confirmed = false;
+
+
+const EARTH_RADIUS = 6371000;
+
+const RAD = Math.PI / 180;
+
+
+function distance(a, b) {
+
+  const lat1 = a.lat * RAD;
+  const lat2 = b.lat * RAD;
+
+  const dLat = (b.lat - a.lat) * RAD;
+  const dLon = (b.lon - a.lon) * RAD;
+
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) *
+    Math.cos(lat2) *
+    Math.sin(dLon / 2) ** 2;
+
+  return 2 *
+    EARTH_RADIUS *
+    Math.asin(Math.sqrt(x));
+}
+
+
+async function loadVehicles() {
+
+  const snapshot =
+    await getDocs(collection(db, "vehicles"));
+
+  vehicles = snapshot.docs.map(item => ({
+    id: item.id,
+    ...item.data()
+  }));
+
+  const select = $("vehicle");
+
+  if (vehicles.length === 0) {
+
+    select.innerHTML =
+      "<option>등록된 차량이 없습니다</option>";
+
+    return;
+  }
+
+  select.innerHTML =
+    vehicles.map(v => `
+      <option value="${v.id}">
+        ${v.plate} · ${v.driver}
+      </option>
+    `).join("");
+}
+
+
+$("start").onclick = () => {
+
+  const vehicle =
+    vehicles.find(v =>
+      v.id === $("vehicle").value
+    );
+
+  if (!vehicle) {
+
+    alert("차량을 선택하세요.");
+
+    return;
+  }
+
+
+  if (
+    !Number.isFinite(vehicle.originLat) ||
+    !Number.isFinite(vehicle.originLon)
+  ) {
+
+    alert("이 차량의 출발지 좌표가 등록되지 않았습니다.");
+
+    return;
+  }
+
+
+  if (watchId !== null) {
+
+    return;
+  }
+
+
+  lastPosition = null;
+  totalDistance = 0;
+  movingSince = null;
+  confirmed = false;
+
+
+  $("state").textContent = "GPS 감시 중";
+
+
+  if (!navigator.geolocation) {
+
+    alert("이 휴대폰에서는 GPS를 사용할 수 없습니다.");
+
+    return;
+  }
+
+
+  watchId =
+    navigator.geolocation.watchPosition(
+
+      async position => {
+
+        const current = {
+
+          lat: position.coords.latitude,
+
+          lon: position.coords.longitude
+
+        };
+
+
+        const baseDistance =
+          distance(
+
+            {
+              lat: vehicle.originLat,
+              lon: vehicle.originLon
+            },
+
+            current
+
+          );
+
+
+        if (lastPosition) {
+
+          const step =
+            distance(lastPosition, current);
+
+
+          /*
+           GPS 오차 방지를 위해
+           3m 이하의 변화는 이동거리에서 제외
+          */
+
+          if (step > 3) {
+
+            totalDistance += step;
+
+            if (!movingSince) {
+
+              movingSince = Date.now();
+
+            }
+
+          }
+
+          else {
+
+            movingSince = null;
+
+          }
+
+        }
+
+
+        lastPosition = current;
+
+
+        const movingSeconds =
+          movingSince
+            ? (Date.now() - movingSince) / 1000
+            : 0;
+
+
+        $("gps").textContent = "정상";
+
+        $("base").textContent =
+          Math.round(baseDistance) + "m";
+
+        $("move").textContent =
+          Math.round(totalDistance) + "m";
+
+        $("secs").textContent =
+          Math.floor(movingSeconds) + "초";
+
+
+        /*
+          운행 시작 조건
+
+          ① 출발지에서 50m 이상 이탈
+          ② 누적 이동거리 50m 이상
+          ③ 1분 연속 이동
+        */
+
+        if (
+          !confirmed &&
+          baseDistance >= 50 &&
+          totalDistance >= 50 &&
+          movingSeconds >= 60
+        ) {
+
+          confirmed = true;
+
+          $("state").textContent =
+            "🟢 운행 시작 확정";
+
+          $("state").className = "ok";
+
+
+          await updateDoc(
+
+            doc(db, "vehicles", vehicle.id),
+
+            {
+              status: "running",
+
+              gps: "normal",
+
+              tripStartedAt:
+                serverTimestamp()
+            }
+
+          );
+
+
+          await addDoc(
+
+            collection(db, "trips"),
+
+            {
+
+              vehicleId: vehicle.id,
+
+              plate: vehicle.plate,
+
+              driver: vehicle.driver,
+
+              startedAt:
+                serverTimestamp(),
+
+              startLat:
+                current.lat,
+
+              startLon:
+                current.lon
+
+            }
+
+          );
+
+        }
+
+        else if (!confirmed) {
+
+          $("state").textContent =
+            "운행 전";
+
+        }
+
+      },
+
+
+      error => {
+
+        $("gps").textContent =
+          "GPS 오류";
+
+        $("state").textContent =
+          "GPS 권한을 확인하세요";
+
+        console.log(error);
+
+      },
+
+
+      {
+
+        enableHighAccuracy: true,
+
+        maximumAge: 5000,
+
+        timeout: 15000
+
+      }
+
+    );
+
+};
+
+
+$("stop").onclick = () => {
+
+  if (watchId !== null) {
+
+    navigator.geolocation.clearWatch(watchId);
+
+  }
+
+  watchId = null;
+
+  $("state").textContent = "대기";
+
+  $("gps").textContent = "중지됨";
+
+};
+
+
+loadVehicles();
+
+</script>
+
+</body>
+</html>
