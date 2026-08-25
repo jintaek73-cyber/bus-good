@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>버스 관리자</title>
+
+<style>
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f4f6f8;
+}
+.wrap {
+  max-width: 900px;
+  margin: auto;
+  padding: 18px;
+}
+.card {
+  background: white;
+  padding: 18px;
+  border-radius: 16px;
+  margin-bottom: 15px;
+}
+input, button {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 13px;
+  margin: 5px 0;
+  border-radius: 10px;
+  font-size: 16px;
+}
+button {
+  border: 0;
+  background: #222;
+  color: white;
+  font-weight: bold;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  text-align: left;
+}
+.running {
+  color: green;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+
+<div class="wrap">
+
+<h1>🚌 버스 관리자</h1>
+
+<div class="card">
+
+<h2>차량 등록</h2>
+
+<input id="plate" placeholder="차량번호 예: 12가 3456">
+
+<input id="driver" placeholder="기사 이름">
+
+<input id="lat"
+       type="number"
+       step="any"
+       placeholder="출발지 위도">
+
+<input id="lon"
+       type="number"
+       step="any"
+       placeholder="출발지 경도">
+
+<button id="add">차량 등록</button>
+
+</div>
+
+
+<div class="card">
+
+<h2>실시간 운행 상태</h2>
+
+<div id="list">불러오는 중...</div>
+
+</div>
+
+</div>
+
+
+<script type="module">
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  serverTimestamp
+}
+from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+
+const firebaseConfig = {
+
+  apiKey: "AIzaSyAYetxeWLMla5_Tikvw7zz6eJBhL0v4N3I",
+
+  authDomain: "bus-good.firebaseapp.com",
+
+  projectId: "bus-good",
+
+  storageBucket: "bus-good.firebasestorage.app",
+
+  messagingSenderId: "830835857254",
+
+  appId: "1:830835857254:web:2a0f10f7ab5a54a9505aa7",
+
+  measurementId: "G-4CY29SJJ8F"
+
+};
+
+
+const app = initializeApp(firebaseConfig);
+
+const db = getFirestore(app);
+
+
+const $ = id => document.getElementById(id);
+
+
+$("add").onclick = async () => {
+
+  const plate = $("plate").value.trim();
+  const driver = $("driver").value.trim();
+  const lat = Number($("lat").value);
+  const lon = Number($("lon").value);
+
+  if (!plate || !driver) {
+
+    alert("차량번호와 기사 이름을 입력하세요.");
+
+    return;
+  }
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+
+    alert("출발지 위도와 경도를 입력하세요.");
+
+    return;
+  }
+
+  await addDoc(
+
+    collection(db, "vehicles"),
+
+    {
+      plate: plate,
+      driver: driver,
+      originLat: lat,
+      originLon: lon,
+      status: "waiting",
+      gps: "waiting",
+      createdAt: serverTimestamp()
+    }
+
+  );
+
+  $("plate").value = "";
+  $("driver").value = "";
+  $("lat").value = "";
+  $("lon").value = "";
+
+  alert("차량이 등록되었습니다.");
+
+};
+
+
+onSnapshot(
+
+  collection(db, "vehicles"),
+
+  snapshot => {
+
+    let html = `
+      <table>
+        <tr>
+          <th>차량번호</th>
+          <th>기사</th>
+          <th>상태</th>
+          <th>GPS</th>
+        </tr>
+    `;
+
+    snapshot.forEach(item => {
+
+      const v = item.data();
+
+      const running = v.status === "running";
+
+      html += `
+        <tr>
+          <td>${v.plate || ""}</td>
+
+          <td>${v.driver || ""}</td>
+
+          <td class="${running ? "running" : ""}">
+            ${running ? "🟢 운행 중" : "⚪ 대기"}
+          </td>
+
+          <td>
+            ${v.gps || "-"}
+          </td>
+        </tr>
+      `;
+
+    });
+
+    html += "</table>";
+
+    $("list").innerHTML = html;
+
+  }
+
+);
+
+</script>
+
+</body>
+</html>
