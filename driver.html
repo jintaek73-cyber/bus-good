@@ -454,23 +454,47 @@ $("start").onclick = () => {
     );
 
 };
-
-
-$("stop").onclick = () => {
+$("stop").onclick = async () => {
 
   if (watchId !== null) {
-
     navigator.geolocation.clearWatch(watchId);
-
   }
 
   watchId = null;
 
-  $("state").textContent = "대기";
+  const vehicle =
+    vehicles.find(v =>
+      v.id === $("vehicle").value
+    );
 
+  if (vehicle) {
+    try {
+      await updateDoc(
+        doc(db, "vehicles", vehicle.id),
+        {
+          status: "waiting",
+          gps: "normal",
+          stoppedAt: serverTimestamp()
+        }
+      );
+    } catch (error) {
+      console.error("운행 상태 저장 오류:", error);
+    }
+  }
+
+  confirmed = false;
+  lastPosition = null;
+  totalDistance = 0;
+  movingSince = null;
+
+  $("state").textContent = "운행 전";
+  $("state").className = "";
   $("gps").textContent = "중지됨";
-
+  $("move").textContent = "0m";
+  $("secs").textContent = "0초";
 };
+
+
 
 
 loadVehicles();
